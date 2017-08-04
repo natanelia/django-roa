@@ -31,6 +31,7 @@ Supported versions
 
 - Django 1.4, 1.5, 1.6, 1.7
 - Python 2.6, 2.7
+- Django REST Framework 3
 
 
 Installation
