@@ -3,6 +3,7 @@ import copy
 import logging
 from StringIO import StringIO
 from django.utils import six
+import importlib
 
 import django
 
@@ -14,8 +15,7 @@ from django.db import models
 from django.db.models import signals
 from django.db.models.options import Options
 from django.db.models.loading import register_models, get_model
-from django.db.models.base import ModelBase, subclass_exception, \
-    get_absolute_url, method_get_order, method_set_order
+from django.db.models.base import ModelBase, subclass_exception, method_get_order, method_set_order
 from django.db.models.fields.related import (OneToOneField, add_lazy_relation)
 from django.utils.functional import curry
 from django.core.serializers.base import DeserializationError
@@ -24,8 +24,8 @@ from django.core.serializers.python import Deserializer as PythonDeserializer, _
 from functools import update_wrapper
 
 from django.utils.encoding import force_unicode, smart_unicode
-from rest_framework.parsers import JSONParser, XMLParser, YAMLParser
-from rest_framework.renderers import JSONRenderer, XMLRenderer, YAMLRenderer
+from rest_framework.parsers import JSONParser
+from rest_framework.renderers import JSONRenderer
 
 from restkit import Resource, RequestFailed, ResourceNotFound
 from django_roa.db import get_roa_headers
@@ -40,6 +40,8 @@ DJANGO_GT_1_4 = django.VERSION[:2] > (1, 4)
 
 ROA_ARGS_NAMES_MAPPING = getattr(settings, 'ROA_ARGS_NAMES_MAPPING', {})
 ROA_FORMAT = getattr(settings, 'ROA_FORMAT', 'json')
+ROA_JSON_PARSER = getattr(settings, 'ROA_JSON_PARSER', 'rest_framework.parsers.JSONParser')
+ROA_JSON_RENDERER = getattr(settings, 'ROA_JSON_RENDERER', 'rest_framework.renderers.JSONRenderer')
 ROA_FILTERS = getattr(settings, 'ROA_FILTERS', {})
 ROA_MODEL_NAME_MAPPING = getattr(settings, 'ROA_MODEL_NAME_MAPPING', [])
 ROA_MODEL_CREATE_MAPPING = getattr(settings, 'ROA_MODEL_CREATE_MAPPING', {})
@@ -580,11 +582,11 @@ class ROAModel(models.Model):
         Cf from rest_framework.renderers import JSONRenderer
         """
         if ROA_FORMAT == 'json':
-            return JSONRenderer()
-        elif ROA_FORMAT == 'xml':
-            return XMLRenderer()
-        elif ROAException == 'yaml':
-            return YAMLRenderer()
+            parts = ROA_JSON_RENDERER.split('.')
+            class_path, class_name = '.'.join(parts[:-1]), parts[-1]
+            module = importlib.import_module(class_path)
+            
+            return getattr(module, class_name)()
         else:
             raise NotImplementedError
 
@@ -594,21 +596,17 @@ class ROAModel(models.Model):
         Cf from rest_framework.parsers import JSONParser
         """
         if ROA_FORMAT == 'json':
-            return JSONParser()
-        elif ROA_FORMAT == 'xml':
-            return XMLParser()
-        elif ROAException == 'yaml':
-            return YAMLParser()
+            parts = ROA_JSON_PARSER.split('.')
+            class_path, class_name = '.'.join(parts[:-1]), parts[-1]
+            module = importlib.import_module(class_path)
+            
+            return getattr(module, class_name)()
         else:
             raise NotImplementedError
 
     def get_serializer_content_type(self):
         if ROA_FORMAT == 'json':
             return {'Content-Type' : 'application/json'}
-        elif ROA_FORMAT == 'xml':
-            return {'Content-Type' : 'application/xml'}
-        elif ROAException == 'yaml':
-            return {'Content-Type' : 'text/x-yaml'}
         else:
             raise NotImplementedError
 
@@ -767,11 +765,13 @@ class ROAModel(models.Model):
             serializer = self.get_serializer(data=data)
             if not serializer.is_valid():
                 raise ROAException(u'Invalid deserialization for %s model: %s' % (self, serializer.errors))
+ 
+            obj = self.__class__(**serializer.initial_data)
             try:
-                self.pk = int(serializer.object.pk)
+                self.pk = int(obj.pk)
             except ValueError:
-                self.pk = serializer.object.pk
-            self = serializer.object
+                self.pk = obj.pk
+            self = obj
 
         if origin:
             signals.post_save.send(sender=origin, instance=self,

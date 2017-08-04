@@ -232,8 +232,12 @@ class RemoteQuerySet(query.QuerySet):
             if not serializer.is_valid():
                 raise ROAException(u'Invalid deserialization for %s model: %s' % (self.model, serializer.errors))
 
-            for obj in serializer.object:
-                yield obj
+            i = 0
+            for obj in serializer.validated_data:
+                obj['id'] = serializer.initial_data[i].get('id', None)
+                
+                i += 1
+                yield self.model(**obj)
 
     def count(self):
         """
@@ -303,11 +307,26 @@ class RemoteQuerySet(query.QuerySet):
 
         # Deserializing objects:
         data = self.model.get_parser().parse(StringIO(response))
+        
+        # m2ms = {}
+        for k,v in data.items():
+            if isinstance(v, list):
+                # m2ms[k] = v
+                del data[k]
+
         serializer = self.model.get_serializer(data=data)
         if not serializer.is_valid():
             raise ROAException(u'Invalid deserialization for %s model: %s' % (self.model, serializer.errors))
 
-        return serializer.object
+        serializer.validated_data['id'] = serializer.initial_data['id']
+        r = self.model(**serializer.validated_data)
+        # for k, v in m2ms.iteritems():
+        #     m2m_field = getattr(r, k, None)
+        #     if m2m_field:
+        #         for item in v:
+        #             m2m_field.add(item)
+        
+        return r
 
     def get(self, *args, **kwargs):
         """
